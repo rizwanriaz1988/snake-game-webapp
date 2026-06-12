@@ -49,7 +49,7 @@ export default function App() {
       botCount: 2,
       soundEnabled: true,
       theme: 'dark',
-      wrapAround: false,
+      wrapAround: true,
       gridSize: DEFAULT_GRID_SIZE,
     };
   });
@@ -478,16 +478,11 @@ export default function App() {
         case 'RIGHT': nextCell.x += 1; break;
       }
 
-      if (wrapAround) {
-        if (nextCell.x < 0) nextCell.x = gridSize - 1;
-        else if (nextCell.x >= gridSize) nextCell.x = 0;
-        if (nextCell.y < 0) nextCell.y = gridSize - 1;
-        else if (nextCell.y >= gridSize) nextCell.y = 0;
-      } else {
-        if (nextCell.x < 0 || nextCell.x >= gridSize || nextCell.y < 0 || nextCell.y >= gridSize) {
-          return; // Wall is unsafe
-        }
-      }
+      // Always wrap around as game does not end when hitting the boundary!
+      if (nextCell.x < 0) nextCell.x = gridSize - 1;
+      else if (nextCell.x >= gridSize) nextCell.x = 0;
+      if (nextCell.y < 0) nextCell.y = gridSize - 1;
+      else if (nextCell.y >= gridSize) nextCell.y = 0;
 
       const isSelfColliding = currentBody.some((seg) => seg.x === nextCell.x && seg.y === nextCell.y);
       const isObstacleColliding = obstacles.some((seg) => seg.x === nextCell.x && seg.y === nextCell.y);
@@ -559,18 +554,11 @@ export default function App() {
     }
     lastMovedDirectionRef.current = direction;
 
-    // Check boundaries for player
-    if (settings.wrapAround) {
-      if (nextPlayerHead.x < 0) nextPlayerHead.x = size - 1;
-      else if (nextPlayerHead.x >= size) nextPlayerHead.x = 0;
-      if (nextPlayerHead.y < 0) nextPlayerHead.y = size - 1;
-      else if (nextPlayerHead.y >= size) nextPlayerHead.y = 0;
-    } else {
-      if (nextPlayerHead.x < 0 || nextPlayerHead.x >= size || nextPlayerHead.y < 0 || nextPlayerHead.y >= size) {
-        playerDead = true;
-        addGameLog('💀 You crashed into the boundary wall!', 'crash');
-      }
-    }
+    // Check boundaries for player - always wrap around as game does not end when hitting the boundary!
+    if (nextPlayerHead.x < 0) nextPlayerHead.x = size - 1;
+    else if (nextPlayerHead.x >= size) nextPlayerHead.x = 0;
+    if (nextPlayerHead.y < 0) nextPlayerHead.y = size - 1;
+    else if (nextPlayerHead.y >= size) nextPlayerHead.y = 0;
 
     // Self body collision
     if (prevSnake.some((seg) => seg.x === nextPlayerHead.x && seg.y === nextPlayerHead.y)) {
@@ -756,17 +744,11 @@ export default function App() {
       let botScore = bot.score;
       let botGrowBy = 0;
 
-      if (settings.wrapAround) {
-        if (nextBotHead.x < 0) nextBotHead.x = size - 1;
-        else if (nextBotHead.x >= size) nextBotHead.x = 0;
-        if (nextBotHead.y < 0) nextBotHead.y = size - 1;
-        else if (nextBotHead.y >= size) nextBotHead.y = 0;
-      } else {
-        if (nextBotHead.x < 0 || nextBotHead.x >= size || nextBotHead.y < 0 || nextBotHead.y >= size) {
-          botCrashed = true;
-          addGameLog(`💥 Bot ${bot.name} crashed into wall!`, 'crash');
-        }
-      }
+      // Wrapping checks - always wrap around
+      if (nextBotHead.x < 0) nextBotHead.x = size - 1;
+      else if (nextBotHead.x >= size) nextBotHead.x = 0;
+      if (nextBotHead.y < 0) nextBotHead.y = size - 1;
+      else if (nextBotHead.y >= size) nextBotHead.y = 0;
 
       // Check head-first conditions with player
       const hitPlayerHead = playerHeadSeg && (nextBotHead.x === playerHeadSeg.x && nextBotHead.y === playerHeadSeg.y);
