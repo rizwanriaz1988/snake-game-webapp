@@ -616,6 +616,22 @@ export default function App() {
       audio.playEat(eatenFood.type);
       activeFoodsList = activeFoodsList.filter((_, idx) => idx !== playerAteFoodIndex);
 
+      // Regenerate replacement food for the player snake eating!
+      let compoundBodies = [...updatedPlayerSnake];
+      currentBots.forEach((b) => {
+        if (b.isAlive && !deadBotIds.has(b.id)) {
+          compoundBodies = [...compoundBodies, ...b.body];
+        }
+      });
+      const brandNewFood = generateSingleFood(compoundBodies, size, activeFoodsList);
+      activeFoodsList = [...activeFoodsList, brandNewFood];
+
+      // Rare extra chance to spawn a secondary sparkling bonus food when list remains small
+      if (Math.random() < 0.12 && activeFoodsList.length <= 1) {
+        const bonusFood = generateSingleFood(compoundBodies, size, activeFoodsList);
+        activeFoodsList = [...activeFoodsList, bonusFood];
+      }
+
       // Score player from food and any bot devours
       setStats((prev) => {
         const addedScore = eatenFood.points + playerScoreBonus;
