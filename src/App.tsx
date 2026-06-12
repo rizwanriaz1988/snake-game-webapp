@@ -585,9 +585,6 @@ export default function App() {
         const botHead = bot.body[0];
         const hitHead = botHead && (nextPlayerHead.x === botHead.x && nextPlayerHead.y === botHead.y);
 
-        // Head-to-body (excluding actual head) collision detector
-        const hitBody = bot.body.slice(1).some((seg) => seg.x === nextPlayerHead.x && seg.y === nextPlayerHead.y);
-
         if (hitHead) {
           if (prevSnake.length > bot.body.length) {
             // Player devours Bot head-first!
@@ -606,10 +603,6 @@ export default function App() {
             deadBotIds.add(bot.id);
             addGameLog(`💀 Double head-collision knockout with ${bot.name}!`, 'crash');
           }
-        } else if (hitBody) {
-          // Rule: Colliding with rival snake body means crashing (no eating allowed!)
-          playerDead = true;
-          addGameLog(`💀 Crashed into ${bot.name}'s body! You can only devour them if you strike their head first!`, 'crash');
         }
       }
     }
@@ -719,19 +712,31 @@ export default function App() {
       }
 
       const botHead = bot.body[0];
+      const botLength = bot.body.length;
       
-      // Define obstacles: player body and other alive bots (excluding self and any dead ones)
-      let obstacles: Position[] = [...updatedPlayerSnake];
+      // Define lethal obstacles for the bot: only heads of rival snakes which are equal length or larger than this bot
+      const lethalObstacles: Position[] = [];
+
+      // Check player head
+      const playerHeadSeg = updatedPlayerSnake[0];
+      if (playerHeadSeg && updatedPlayerSnake.length >= botLength) {
+        lethalObstacles.push(playerHeadSeg);
+      }
+
+      // Check other rival bot heads
       currentBots.forEach((b) => {
         if (b.id !== bot.id && b.isAlive && !deadBotIds.has(b.id)) {
-          obstacles = [...obstacles, ...b.body];
+          const otherHead = b.body[0];
+          if (otherHead && b.body.length >= botLength) {
+            lethalObstacles.push(otherHead);
+          }
         }
       });
 
       const nextDir = getNextBotDirection(
         botHead,
         bot.body,
-        obstacles,
+        lethalObstacles,
         activeFoodsList,
         size,
         settings.wrapAround,
@@ -763,10 +768,8 @@ export default function App() {
         }
       }
 
-      // Check head-first and body crash conditions with player
-      const playerHeadSeg = updatedPlayerSnake[0];
+      // Check head-first conditions with player
       const hitPlayerHead = playerHeadSeg && (nextBotHead.x === playerHeadSeg.x && nextBotHead.y === playerHeadSeg.y);
-      const hitPlayerBody = updatedPlayerSnake.slice(1).some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
 
       let hitSelf = bot.body.some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
       let hitRivalBotName = '';
@@ -778,20 +781,20 @@ export default function App() {
         if (other.id !== bot.id && other.isAlive && !deadBotIds.has(other.id)) {
           const otherHeadSeg = other.body[0];
           const hitOtherHead = otherHeadSeg && (nextBotHead.x === otherHeadSeg.x && nextBotHead.y === otherHeadSeg.y);
-          const hitOtherBody = other.body.slice(1).some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
 
           if (hitOtherHead) {
             if (bot.body.length > other.body.length) {
               devouredRivalId = other.id;
               hitRivalIsSmaller = true;
-            } else {
+            } else if (bot.body.length < other.body.length) {
               botCrashed = true;
+            } else {
+              // Equal length: double head-first knockout
+              botCrashed = true;
+              devouredRivalId = other.id;
+              hitRivalIsSmaller = false;
             }
             hitRivalBotName = other.name;
-            break;
-          } else if (hitOtherBody) {
-            // Cannot eat other bot's body, always. We crash!
-            botCrashed = true;
             break;
           }
         }
@@ -813,13 +816,15 @@ export default function App() {
           playerDead = true;
           botCrashed = true;
         }
-      } else if (hitPlayerBody) {
-        // Crashed into player body
-        botCrashed = true;
       }
 
       if (botCrashed) {
         deadBotIds.add(bot.id);
+        if (devouredRivalId && !hitRivalIsSmaller) {
+          // If equal-sized head-on collision, also kill the rival!
+          deadBotIds.add(devouredRivalId);
+          addGameLog(`⚔️ Mutual head-first crash between ${bot.name} and ${hitRivalBotName}!`, 'crash');
+        }
         return {
           ...bot,
           isAlive: false,
