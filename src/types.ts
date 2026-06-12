@@ -11,9 +11,12 @@ export interface Position {
 }
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
+export type SpeedOption = 'slow' | 'normal' | 'fast' | 'hyper';
 
 export interface GameSettings {
   difficulty: Difficulty;
+  speedOption: SpeedOption;
+  botCount: number; // Number of AI competitor snakes, default is 2
   soundEnabled: boolean;
   theme: 'light' | 'dark' | 'retro';
   wrapAround: boolean;
@@ -50,3 +53,15 @@ export interface Food {
   points: number;
   pulseTimer: number; // For animation effects
 }
+
+export interface BotSnake {
+  id: string;
+  name: string;
+  body: Position[];
+  direction: Direction;
+  color: string;
+  isAlive: boolean;
+  score: number;
+  pulse?: number;
+}
+

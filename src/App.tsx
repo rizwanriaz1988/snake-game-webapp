@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Volume2, VolumeX, Sparkles, Trophy, RotateCcw, Play, Pause, Gamepad2, Settings as SettingsIcon } from 'lucide-react';
-import { Direction, GameSettings, GameStats, GameStatus, Position, Food, FoodType } from './types';
+import { Direction, GameSettings, GameStats, GameStatus, Position, Food, FoodType, BotSnake } from './types';
 import SnakeBoard from './components/SnakeBoard';
 import Controls from './components/Controls';
 import Settings from './components/Settings';
@@ -21,17 +21,32 @@ const DIFFICULTY_CONFIG = {
   hard: { speed: 70, decrement: 7, minSpeed: 25 },
 };
 
+const SPEED_OPTION_MULTIPLIERS = {
+  slow: 1.5,     // 1.5x slower (larger interval)
+  normal: 1.0,   // Standard
+  fast: 0.7,     // 0.7x faster
+  hyper: 0.45,   // Adrenaline-fueled speed!
+};
+
 export default function App() {
   // Latch initial configurations from local storage
   const [settings, setSettings] = useState<GameSettings>(() => {
     try {
       const saved = localStorage.getItem('snake_game_settings_v1');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Fallback for newly added speedOption and botCount
+        if (!parsed.speedOption) parsed.speedOption = 'normal';
+        if (parsed.botCount === undefined) parsed.botCount = 2;
+        return parsed;
+      }
     } catch (e) {
       console.warn('Could not read settings from localStorage', e);
     }
     return {
       difficulty: 'medium',
+      speedOption: 'normal',
+      botCount: 2,
       soundEnabled: true,
       theme: 'dark',
       wrapAround: false,
@@ -54,7 +69,43 @@ export default function App() {
   const [snake, setSnake] = useState<Position[]>([]);
   const [direction, setDirection] = useState<Direction>('UP');
   const [foods, setFoods] = useState<Food[]>([]);
+  const [botSnakes, setBotSnakes] = useState<BotSnake[]>([]);
   const [status, setStatus] = useState<GameStatus>('IDLE');
+
+  // Real-time multiplayer interaction logger
+  interface GameLog {
+    id: string;
+    message: string;
+    type: 'eat' | 'crash' | 'system' | 'player_eat';
+    timestamp: string;
+  }
+  const [gameLogs, setGameLogs] = useState<GameLog[]>([]);
+
+  const addGameLog = useCallback((message: string, type: 'eat' | 'crash' | 'system' | 'player_eat') => {
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    setGameLogs((prev) => [
+      { id: `${Date.now()}-${Math.random()}`, message, type, timestamp },
+      ...prev.slice(0, 10),
+    ]);
+  }, []);
+
+  // Ref-based state synchronization buffers for the simultaneous AI physics tick engine
+  const snakeRef = useRef<Position[]>([]);
+  const botSnakesRef = useRef<BotSnake[]>([]);
+  const foodsRef = useRef<Food[]>([]);
+
+  useEffect(() => {
+    snakeRef.current = snake;
+  }, [snake]);
+
+  useEffect(() => {
+    botSnakesRef.current = botSnakes;
+  }, [botSnakes]);
+
+  useEffect(() => {
+    foodsRef.current = foods;
+  }, [foods]);
+
   const [stats, setStats] = useState<GameStats>({
     score: 0,
     highScore: 0,
@@ -89,46 +140,6 @@ export default function App() {
       highScore: activeHighScore,
     }));
   }, [settings.difficulty, highScores]);
-
-  // Setup Snake and Food positions on load or reset
-  const initGame = useCallback(() => {
-    const size = settings.gridSize;
-    const centerX = Math.floor(size / 2);
-    const centerY = Math.floor(size / 2);
-
-    // Initial snake body hanging downwards
-    const initialSnake = [
-      { x: centerX, y: centerY },
-      { x: centerX, y: centerY + 1 },
-      { x: centerX, y: centerY + 2 },
-    ];
-
-    setSnake(initialSnake);
-    setDirection('UP');
-    lastMovedDirectionRef.current = 'UP';
-    newHighScoreBeatenRef.current = false;
-
-    // Build fresh speed from difficulty selection
-    const startSpeed = DIFFICULTY_CONFIG[settings.difficulty].speed;
-
-    const initialStats: GameStats = {
-      score: 0,
-      highScore: highScores[settings.difficulty] || 0,
-      foodEaten: 0,
-      level: 1,
-      speed: startSpeed,
-    };
-    setStats(initialStats);
-
-    // Generate starter food
-    const firstFood = generateSingleFood(initialSnake, size, []);
-    setFoods([firstFood]);
-  }, [settings.difficulty, settings.gridSize, highScores]);
-
-  // Initialize on mount
-  useEffect(() => {
-    initGame();
-  }, [initGame]);
 
   // Generates unique coordinates not colliding with snake or existing food
   const generateSingleFood = (
@@ -188,6 +199,112 @@ export default function App() {
       pulseTimer: 0,
     };
   };
+
+  // Setup Snake and Food positions on load or reset
+  const initGame = useCallback(() => {
+    const size = settings.gridSize;
+    const centerX = Math.floor(size / 2);
+    const centerY = Math.floor(size / 2);
+
+    // Initial snake body hanging downwards
+    const initialSnake = [
+      { x: centerX, y: centerY },
+      { x: centerX, y: centerY + 1 },
+      { x: centerX, y: centerY + 2 },
+    ];
+
+    setSnake(initialSnake);
+    setDirection('UP');
+    lastMovedDirectionRef.current = 'UP';
+    newHighScoreBeatenRef.current = false;
+
+    // Reset battle logs
+    setGameLogs([
+      {
+        id: 'start-log',
+        message: '⚔️ Arena started! devouring other snakes makes you grow!',
+        type: 'system',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+      }
+    ]);
+
+    // Build fresh speed from difficulty selection and manually adjustable speedOption!
+    const baseSpeed = DIFFICULTY_CONFIG[settings.difficulty].speed;
+    const speedMult = SPEED_OPTION_MULTIPLIERS[settings.speedOption || 'normal'];
+    const startSpeed = Math.round(baseSpeed * speedMult);
+
+    const initialStats: GameStats = {
+      score: 0,
+      highScore: highScores[settings.difficulty] || 0,
+      foodEaten: 0,
+      level: 1,
+      speed: startSpeed,
+    };
+    setStats(initialStats);
+
+    // Setup initial bot/AI opponent snakes
+    const defaultBotsList = [
+      { id: 'bot-1', name: 'Cyber-Viper 🤖', color: '#ec4899', isAlive: true, score: 0 },
+      { id: 'bot-2', name: 'Slyther-AI 👾', color: '#a855f7', isAlive: true, score: 0 },
+      { id: 'bot-3', name: 'Noodle-3000 ⚡', color: '#06b6d4', isAlive: true, score: 0 },
+      { id: 'bot-4', name: 'Nezha-Core 🐉', color: '#f97316', isAlive: true, score: 0 },
+    ];
+
+    const botCount = settings.botCount !== undefined ? settings.botCount : 2;
+    const activeBots: BotSnake[] = [];
+
+    for (let i = 0; i < botCount; i++) {
+      const template = defaultBotsList[i % defaultBotsList.length];
+      
+      // Compute safe starting position in quadrants
+      let startX = 2 + (i * 4);
+      let startY = 3 + ((i % 2) * 5);
+      
+      // Avoid overlap with player snake
+      if (Math.abs(startX - centerX) < 2) {
+        startX = (startX + 6) % size;
+      }
+
+      activeBots.push({
+        id: `${template.id}-${Date.now()}-${i}`,
+        name: template.name,
+        color: template.color,
+        isAlive: true,
+        score: 0,
+        direction: i % 2 === 0 ? 'LEFT' : 'RIGHT',
+        body: [
+          { x: startX, y: startY },
+          { x: startX, y: (startY + 1) % size },
+          { x: startX, y: (startY + 2) % size },
+        ],
+      });
+    }
+
+    setBotSnakes(activeBots);
+
+    // Generate starter food (multiplied if there are bots)
+    const startingFoods: Food[] = [];
+    const numFoods = 1 + botCount;
+    let tempAllSegments = [...initialSnake];
+
+    // Exclude bot snake spots
+    activeBots.forEach((bot) => {
+      tempAllSegments = [...tempAllSegments, ...bot.body];
+    });
+
+    for (let f = 0; f < numFoods; f++) {
+      const foodItem = generateSingleFood(tempAllSegments, size, startingFoods);
+      startingFoods.push(foodItem);
+      tempAllSegments.push(foodItem.position);
+    }
+
+    setFoods(startingFoods);
+  }, [settings.difficulty, settings.gridSize, settings.speedOption, settings.botCount, highScores]);
+
+  // Initialize on mount
+  useEffect(() => {
+    initGame();
+  }, [initGame]);
 
   // Safe direction controller that ignores self-collisions inside tick limits
   const handleDirectionChange = useCallback(
@@ -316,136 +433,87 @@ export default function App() {
     touchStartRef.current = null;
   };
 
-  // Main core physics tick
-  const moveSnake = useCallback(() => {
-    if (status !== 'RUNNING') return;
+  // AI decision-maker for bots: avoids self, boundaries and other snakes, pathing towards nearest food
+  const getNextBotDirection = (
+    botHead: Position,
+    currentBody: Position[],
+    obstacles: Position[],
+    foods: Food[],
+    gridSize: number,
+    wrapAround: boolean,
+    currentDir: Direction
+  ): Direction => {
+    if (foods.length === 0) return currentDir;
 
-    setSnake((prevSnake) => {
-      if (prevSnake.length === 0) return prevSnake;
-
-      const head = prevSnake[0];
-      let newHead = { ...head };
-
-      switch (direction) {
-        case 'UP':
-          newHead.y -= 1;
-          break;
-        case 'DOWN':
-          newHead.y += 1;
-          break;
-        case 'LEFT':
-          newHead.x -= 1;
-          break;
-        case 'RIGHT':
-          newHead.x += 1;
-          break;
+    let nearestFood = foods[0].position;
+    let minDist = Math.abs(botHead.x - nearestFood.x) + Math.abs(botHead.y - nearestFood.y);
+    foods.forEach((f) => {
+      const dist = Math.abs(botHead.x - f.position.x) + Math.abs(botHead.y - f.position.y);
+      if (dist < minDist) {
+        minDist = dist;
+        nearestFood = f.position;
       }
-
-      // Frame direction locking to avoid rapid opposite collision
-      lastMovedDirectionRef.current = direction;
-
-      const size = settings.gridSize;
-
-      // 1. Boundary Wall Cross Check
-      if (settings.wrapAround) {
-        if (newHead.x < 0) newHead.x = size - 1;
-        else if (newHead.x >= size) newHead.x = 0;
-
-        if (newHead.y < 0) newHead.y = size - 1;
-        else if (newHead.y >= size) newHead.y = 0;
-      } else {
-        if (newHead.x < 0 || newHead.x >= size || newHead.y < 0 || newHead.y >= size) {
-          triggerGameOver();
-          return prevSnake; // Halt movement
-        }
-      }
-
-      // 2. Self Body Collision Check (avoid crashing in neck, check full body)
-      const hitBody = prevSnake.some((segment) => segment.x === newHead.x && segment.y === newHead.y);
-      if (hitBody) {
-        triggerGameOver();
-        return prevSnake;
-      }
-
-      // 3. Food Eating Check
-      const eatenFoodIndex = foods.findIndex(
-        (f) => f.position.x === newHead.x && f.position.y === newHead.y
-      );
-
-      const computedSnake = [newHead, ...prevSnake];
-
-      if (eatenFoodIndex !== -1) {
-        const eatenFood = foods[eatenFoodIndex];
-        
-        // Play synthesizer response
-        audio.playEat(eatenFood.type);
-
-        // Remove eaten food and build replacement food
-        const remainingFood = foods.filter((_, idx) => idx !== eatenFoodIndex);
-        const newFood = generateSingleFood(computedSnake, size, remainingFood);
-        const updatedFoods = [...remainingFood, newFood];
-
-        // Rare extra chance to spawn a secondary sparkling golden apple when list is small
-        if (Math.random() < 0.12 && updatedFoods.length === 1) {
-          const bonusFood = generateSingleFood(computedSnake, size, updatedFoods);
-          updatedFoods.push(bonusFood);
-        }
-
-        setFoods(updatedFoods);
-
-        // Score calculations
-        setStats((prev) => {
-          const addedScore = eatenFood.points;
-          const nextScore = prev.score + addedScore;
-          const updatedFoodCount = prev.foodEaten + 1;
-
-          // Compute Level Up and speed boosts
-          let currentLevel = prev.level;
-          let currentSpeed = prev.speed;
-          const config = DIFFICULTY_CONFIG[settings.difficulty];
-
-          if (updatedFoodCount % 3 === 0) {
-            currentLevel += 1;
-            currentSpeed = Math.max(currentSpeed - config.decrement, config.minSpeed);
-            audio.playLevelUp();
-          }
-
-          // Trigger speed potion secondary boost
-          if (eatenFood.type === 'SPEED_BOOST') {
-            currentSpeed = Math.max(currentSpeed - 8, config.minSpeed);
-          }
-
-          // Track record breakers
-          let targetHighScore = prev.highScore;
-          if (nextScore > prev.highScore) {
-            targetHighScore = nextScore;
-            if (!newHighScoreBeatenRef.current && prev.highScore > 0) {
-              newHighScoreBeatenRef.current = true;
-              audio.playHighScore();
-            }
-          }
-
-          return {
-            ...prev,
-            score: nextScore,
-            foodEaten: updatedFoodCount,
-            level: currentLevel,
-            speed: currentSpeed,
-            highScore: targetHighScore,
-          };
-        });
-
-        // Do not pop tail block (snake elongates)
-        return computedSnake;
-      }
-
-      // Normal movement loop: slide body grid forward
-      computedSnake.pop();
-      return computedSnake;
     });
-  }, [direction, foods, settings, status]);
 
-  const triggerGameOver = () => {
+    const directions: Direction[] = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
+    const oppositeDir: Record<Direction, Direction> = {
+      UP: 'DOWN',
+      DOWN: 'UP',
+      LEFT: 'RIGHT',
+      RIGHT: 'LEFT',
+    };
+    const opp = oppositeDir[currentDir];
+
+    const possibleChoices = directions.filter((d) => d !== opp);
+
+    let bestDir = currentDir;
+    let bestScore = -Infinity;
+
+    possibleChoices.forEach((dir) => {
+      let nextCell = { ...botHead };
+      switch (dir) {
+        case 'UP': nextCell.y -= 1; break;
+        case 'DOWN': nextCell.y += 1; break;
+        case 'LEFT': nextCell.x -= 1; break;
+        case 'RIGHT': nextCell.x += 1; break;
+      }
+
+      if (wrapAround) {
+        if (nextCell.x < 0) nextCell.x = gridSize - 1;
+        else if (nextCell.x >= gridSize) nextCell.x = 0;
+        if (nextCell.y < 0) nextCell.y = gridSize - 1;
+        else if (nextCell.y >= gridSize) nextCell.y = 0;
+      } else {
+        if (nextCell.x < 0 || nextCell.x >= gridSize || nextCell.y < 0 || nextCell.y >= gridSize) {
+          return; // Wall is unsafe
+        }
+      }
+
+      const isSelfColliding = currentBody.some((seg) => seg.x === nextCell.x && seg.y === nextCell.y);
+      const isObstacleColliding = obstacles.some((seg) => seg.x === nextCell.x && seg.y === nextCell.y);
+
+      if (isSelfColliding || isObstacleColliding) {
+        return; // Crash warning
+      }
+
+      let rating = 1000;
+      const newDist = Math.abs(nextCell.x - nearestFood.x) + Math.abs(nextCell.y - nearestFood.y);
+      rating -= newDist * 20;
+
+      if (dir === currentDir) {
+        rating += 5;
+      }
+
+      if (rating > bestScore) {
+        bestScore = rating;
+        bestDir = dir;
+      }
+    });
+
+    return bestDir;
+  };
+
+  const triggerGameOver = useCallback(() => {
     setStatus('GAME_OVER');
     audio.playCrash();
 
@@ -461,7 +529,321 @@ export default function App() {
       }
       return currentStats;
     });
-  };
+  }, [settings.difficulty, highScores]);
+
+  // Main core physics tick
+  const moveSnake = useCallback(() => {
+    if (status !== 'RUNNING') return;
+
+    const size = settings.gridSize;
+    const prevSnake = snakeRef.current;
+    if (prevSnake.length === 0) return;
+
+    const currentBots = botSnakesRef.current;
+    let activeFoodsList = [...foodsRef.current];
+
+    const aliveBots = currentBots.filter((b) => b.isAlive);
+    const deadBotIds = new Set<string>();
+    let playerDead = false;
+    let playerGrowBy = 0;
+    let playerScoreBonus = 0;
+
+    // 1. Calculate proposed next player head
+    const playerHead = prevSnake[0];
+    let nextPlayerHead = { ...playerHead };
+    switch (direction) {
+      case 'UP': nextPlayerHead.y -= 1; break;
+      case 'DOWN': nextPlayerHead.y += 1; break;
+      case 'LEFT': nextPlayerHead.x -= 1; break;
+      case 'RIGHT': nextPlayerHead.x += 1; break;
+    }
+    lastMovedDirectionRef.current = direction;
+
+    // Check boundaries for player
+    if (settings.wrapAround) {
+      if (nextPlayerHead.x < 0) nextPlayerHead.x = size - 1;
+      else if (nextPlayerHead.x >= size) nextPlayerHead.x = 0;
+      if (nextPlayerHead.y < 0) nextPlayerHead.y = size - 1;
+      else if (nextPlayerHead.y >= size) nextPlayerHead.y = 0;
+    } else {
+      if (nextPlayerHead.x < 0 || nextPlayerHead.x >= size || nextPlayerHead.y < 0 || nextPlayerHead.y >= size) {
+        playerDead = true;
+        addGameLog('💀 You crashed into the boundary wall!', 'crash');
+      }
+    }
+
+    // Self body collision
+    if (prevSnake.some((seg) => seg.x === nextPlayerHead.x && seg.y === nextPlayerHead.y)) {
+      playerDead = true;
+      addGameLog('💀 You bit your own tail!', 'crash');
+    }
+
+    // Devour or crash into rival bots
+    if (!playerDead) {
+      for (const bot of aliveBots) {
+        const hitsBot = bot.body.some((seg) => seg.x === nextPlayerHead.x && seg.y === nextPlayerHead.y);
+        if (hitsBot) {
+          if (prevSnake.length > bot.body.length) {
+            // Player devours Bot!
+            deadBotIds.add(bot.id);
+            playerScoreBonus += 50;
+            playerGrowBy += 3;
+            addGameLog(`⚡ You devoured ${bot.name}! (+50 pts)`, 'player_eat');
+            audio.playLevelUp(); // satisfying bite crunch alternative
+          } else {
+            // Player is smaller/equal and crashes!
+            playerDead = true;
+            addGameLog(`💀 Killed by a bigger rival (${bot.name})!`, 'crash');
+          }
+        }
+      }
+    }
+
+    if (playerDead) {
+      triggerGameOver();
+      return;
+    }
+
+    // Check player eating food
+    let playerAteFoodIndex = activeFoodsList.findIndex(
+      (f) => f.position.x === nextPlayerHead.x && f.position.y === nextPlayerHead.y
+    );
+
+    const updatedPlayerSnake = [nextPlayerHead, ...prevSnake];
+
+    if (playerAteFoodIndex !== -1) {
+      const eatenFood = activeFoodsList[playerAteFoodIndex];
+      audio.playEat(eatenFood.type);
+      activeFoodsList = activeFoodsList.filter((_, idx) => idx !== playerAteFoodIndex);
+
+      // Score player from food and any bot devours
+      setStats((prev) => {
+        const addedScore = eatenFood.points + playerScoreBonus;
+        const nextScore = prev.score + addedScore;
+        const updatedFoodCount = prev.foodEaten + 1;
+
+        let currentLevel = prev.level;
+        let currentSpeed = prev.speed;
+        const config = DIFFICULTY_CONFIG[settings.difficulty];
+
+        if (updatedFoodCount % 3 === 0) {
+          currentLevel += 1;
+          currentSpeed = Math.max(currentSpeed - config.decrement, config.minSpeed);
+          audio.playLevelUp();
+        }
+
+        if (eatenFood.type === 'SPEED_BOOST') {
+          currentSpeed = Math.max(currentSpeed - 8, config.minSpeed);
+        }
+
+        let targetHighScore = prev.highScore;
+        if (nextScore > prev.highScore) {
+          targetHighScore = nextScore;
+          if (!newHighScoreBeatenRef.current && prev.highScore > 0) {
+            newHighScoreBeatenRef.current = true;
+            audio.playHighScore();
+          }
+        }
+
+        return {
+          ...prev,
+          score: nextScore,
+          foodEaten: updatedFoodCount,
+          level: currentLevel,
+          speed: currentSpeed,
+          highScore: targetHighScore,
+        };
+      });
+    } else {
+      updatedPlayerSnake.pop();
+
+      // If we didn't eat normal food, but ate a bot, update player score stats!
+      if (playerScoreBonus > 0) {
+        setStats((prev) => {
+          const nextScore = prev.score + playerScoreBonus;
+          let targetHighScore = prev.highScore;
+          if (nextScore > prev.highScore) {
+            targetHighScore = nextScore;
+          }
+          return {
+            ...prev,
+            score: nextScore,
+            highScore: targetHighScore,
+          };
+        });
+      }
+    }
+
+    // Apply immediate expansion segments to player body if they devoured a bot
+    for (let grow = 0; grow < playerGrowBy; grow++) {
+      const lastSeg = updatedPlayerSnake[updatedPlayerSnake.length - 1] || nextPlayerHead;
+      updatedPlayerSnake.push({ ...lastSeg });
+    }
+
+    // 2. Process AI Bot Snake moves
+    const nextBots = currentBots.map((bot) => {
+      // If dead or eaten during this turn
+      if (!bot.isAlive || deadBotIds.has(bot.id) || bot.body.length === 0) {
+        return { ...bot, isAlive: false };
+      }
+
+      const botHead = bot.body[0];
+      
+      // Define obstacles: player body and other alive bots (excluding self and any dead ones)
+      let obstacles: Position[] = [...updatedPlayerSnake];
+      currentBots.forEach((b) => {
+        if (b.id !== bot.id && b.isAlive && !deadBotIds.has(b.id)) {
+          obstacles = [...obstacles, ...b.body];
+        }
+      });
+
+      const nextDir = getNextBotDirection(
+        botHead,
+        bot.body,
+        obstacles,
+        activeFoodsList,
+        size,
+        settings.wrapAround,
+        bot.direction
+      );
+
+      let nextBotHead = { ...botHead };
+      switch (nextDir) {
+        case 'UP': nextBotHead.y -= 1; break;
+        case 'DOWN': nextBotHead.y += 1; break;
+        case 'LEFT': nextBotHead.x -= 1; break;
+        case 'RIGHT': nextBotHead.x += 1; break;
+      }
+
+      // Wrapping checks
+      let botCrashed = false;
+      if (settings.wrapAround) {
+        if (nextBotHead.x < 0) nextBotHead.x = size - 1;
+        else if (nextBotHead.x >= size) nextBotHead.x = 0;
+        if (nextBotHead.y < 0) nextBotHead.y = size - 1;
+        else if (nextBotHead.y >= size) nextBotHead.y = 0;
+      } else {
+        if (nextBotHead.x < 0 || nextBotHead.x >= size || nextBotHead.y < 0 || nextBotHead.y >= size) {
+          botCrashed = true;
+          addGameLog(`💥 Bot ${bot.name} crashed into wall!`, 'crash');
+        }
+      }
+
+      // Check crash/devoured logic
+      let hitPlayer = updatedPlayerSnake.some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
+      let hitSelf = bot.body.some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
+      let hitRivalBotName = '';
+      let hitRivalIsSmaller = false;
+      let devouredRivalId: string | null = null;
+
+      // Check other bots
+      for (const other of currentBots) {
+        if (other.id !== bot.id && other.isAlive && !deadBotIds.has(other.id)) {
+          const hitOther = other.body.some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
+          if (hitOther) {
+            if (bot.body.length > other.body.length) {
+              devouredRivalId = other.id;
+              hitRivalIsSmaller = true;
+            } else {
+              botCrashed = true;
+            }
+            hitRivalBotName = other.name;
+            break;
+          }
+        }
+      }
+
+      if (hitSelf) {
+        botCrashed = true;
+      }
+
+      if (hitPlayer) {
+        // If bot is bigger than player, bot eats player!
+        if (bot.body.length > updatedPlayerSnake.length) {
+          playerDead = true;
+        } else {
+          botCrashed = true;
+        }
+      }
+
+      if (botCrashed) {
+        return {
+          ...bot,
+          isAlive: false,
+        };
+      }
+
+      let botScore = bot.score;
+      let botGrowBy = 0;
+
+      // Handle devouring rival bot
+      if (devouredRivalId && hitRivalIsSmaller) {
+        deadBotIds.add(devouredRivalId);
+        botScore += 50;
+        botGrowBy = 3;
+        addGameLog(`🔥 ${bot.name} devoured ${hitRivalBotName}! (+50 pts)`, 'eat');
+      }
+
+      const botAteFoodIndex = activeFoodsList.findIndex(
+        (f) => f.position.x === nextBotHead.x && f.position.y === nextBotHead.y
+      );
+
+      const updatedBotBody = [nextBotHead, ...bot.body];
+
+      if (botAteFoodIndex !== -1) {
+        const eatenFood = activeFoodsList[botAteFoodIndex];
+        botScore += eatenFood.points;
+
+        // Remove and replenish food
+        activeFoodsList = activeFoodsList.filter((_, idx) => idx !== botAteFoodIndex);
+
+        let compoundBodies = [...updatedPlayerSnake, ...updatedBotBody];
+        currentBots.forEach((b) => {
+          if (b.id !== bot.id && b.isAlive && !deadBotIds.has(b.id)) {
+            compoundBodies = [...compoundBodies, ...b.body];
+          }
+        });
+
+        const brandNewFood = generateSingleFood(compoundBodies, size, activeFoodsList);
+        activeFoodsList = [...activeFoodsList, brandNewFood];
+      } else {
+        updatedBotBody.pop();
+      }
+
+      // Apply growth
+      for (let bg = 0; bg < botGrowBy; bg++) {
+        const lastSeg = updatedBotBody[updatedBotBody.length - 1] || nextBotHead;
+        updatedBotBody.push({ ...lastSeg });
+      }
+
+      return {
+        ...bot,
+        body: updatedBotBody,
+        direction: nextDir,
+        score: botScore,
+      };
+    });
+
+    if (playerDead) {
+      addGameLog('💀 Devoured by a larger rival snake!', 'crash');
+      triggerGameOver();
+      return;
+    }
+
+    // Now filter bots again to set any newly eaten/dead bots to dead
+    const finalBots = nextBots.map((b) => {
+      if (deadBotIds.has(b.id)) {
+        return { ...b, isAlive: false };
+      }
+      return b;
+    });
+
+    // Write all calculated states together!
+    setSnake(updatedPlayerSnake);
+    setBotSnakes(finalBots);
+    setFoods(activeFoodsList);
+
+  }, [direction, settings, status, triggerGameOver, addGameLog]);
 
   // Run Interval ticks for Snake motion speed loops
   useEffect(() => {
@@ -646,7 +1028,7 @@ export default function App() {
           {/* COLUMN 1: BOARD CANVAS (8 Columns spanning) */}
           <div className="lg:col-span-12 flex flex-col items-center">
             
-            <div className="w-full flex flex-col xl:flex-row gap-6 justify-center items-center">
+            <div className="w-full flex flex-col xl:flex-row gap-6 justify-center items-stretch items-center">
               
               <div className="w-full max-w-lg relative select-none">
                 
@@ -664,6 +1046,7 @@ export default function App() {
                     status={status}
                     score={stats.score}
                     theme={settings.theme}
+                    botSnakes={botSnakes}
                   />
 
                   {/* BIG IDLE START / RESTART GAME OVERLAY FOR CONVENIENCE */}
@@ -702,7 +1085,7 @@ export default function App() {
                         GAME OVER
                       </h2>
                       <p className="text-xs text-slate-400 mt-1 max-w-xs leading-relaxed">
-                        You collided with a boundary or bit your own tail.
+                        You collided with a boundary, rival bot, or bit your own tail.
                       </p>
 
                       <div className="grid grid-cols-2 gap-4 my-4 max-w-xs w-full bg-[#16182d]/90 p-3 rounded-xl border border-white/5 text-xs">
@@ -779,6 +1162,114 @@ export default function App() {
                   )}
                 </div>
 
+              </div>
+
+              {/* STUNNING REAL-TIME MULTIPLAYER LEADERBOARD */}
+              <div className={`w-full max-w-sm shrink-0 p-5 rounded-2xl border transition-all duration-300 ${cardBg} flex flex-col justify-between`}>
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-[#00e1d9] mb-4 flex items-center gap-2 border-b pb-2.5 border-white/5">
+                    <Trophy className="w-4 h-4 text-amber-400" />
+                    Rivalry Arena Leaderboard
+                  </h3>
+                  
+                  <div className="space-y-2.5">
+                    {/* Player item */}
+                    <div className={`p-2.5 rounded-xl flex items-center justify-between border transition-all duration-300 ${
+                      stats.score >= Math.max(...botSnakes.map((b) => b.isAlive ? b.score : 0), 0)
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-white shadow-[0_0_12px_rgba(16,185,129,0.1)]'
+                        : 'bg-white/5 border-transparent text-slate-300'
+                    }`}>
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                        <span className="text-xs font-bold font-sans">You (Player)</span>
+                        <span className="text-[8px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded uppercase font-black tracking-wider">
+                          Live
+                        </span>
+                      </div>
+                      <span className="font-mono font-bold text-sm tracking-wide text-emerald-400">{stats.score}</span>
+                    </div>
+
+                    {/* Bots items, sorted by current score */}
+                    {botSnakes.length === 0 ? (
+                      <div className="text-[10px] text-slate-500 italic text-center py-4">
+                        No rival bots active. Add bots using the settings drawer!
+                      </div>
+                    ) : (
+                      [...botSnakes]
+                        .sort((a, b) => b.score - a.score)
+                        .map((bot) => (
+                          <div
+                            key={bot.id}
+                            className={`p-2.5 rounded-xl flex items-center justify-between border transition-all duration-300 ${
+                              !bot.isAlive
+                                ? 'opacity-45 border-dashed border-slate-800 bg-black/20 text-slate-500'
+                                : 'bg-[#101224]/50 border-white/5 hover:border-white/10 text-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div
+                                className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm transition-transform duration-300 hover:scale-110"
+                                style={{ backgroundColor: bot.color }}
+                              />
+                              <span className={`text-xs font-semibold ${!bot.isAlive ? 'line-through text-slate-500' : 'text-slate-300'}`}>
+                                {bot.name}
+                              </span>
+                              {!bot.isAlive && (
+                                <span className="text-[8px] bg-rose-500/20 text-rose-400 px-1.5 py-0.5 rounded uppercase font-black tracking-wider">
+                                  Crashed
+                                </span>
+                              )}
+                            </div>
+                            <span className="font-mono text-xs font-semibold text-slate-400">{bot.score}</span>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </div>
+
+                {/* REAL-TIME BATTLE FEED EVENTS LOG */}
+                <div className="mt-5 pt-4 border-t border-white/5">
+                  <h4 className="text-[10px] font-extrabold uppercase tracking-widest text-[#00e1d9] mb-2.5 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                    Live Arena Activity Feed
+                  </h4>
+                  
+                  <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1 select-none font-sans scrollbar-thin scrollbar-thumb-white/5 scrollbar-track-transparent">
+                    {gameLogs.length === 0 ? (
+                      <div className="text-[9px] text-slate-600 italic py-2 text-center">No arena activities yet. Engage thrusters!</div>
+                    ) : (
+                      gameLogs.map((log) => {
+                        let badgeStyle = 'text-slate-400 bg-white/5';
+                        if (log.type === 'player_eat') badgeStyle = 'text-emerald-400 bg-emerald-500/10 font-bold border border-emerald-500/10';
+                        else if (log.type === 'eat') badgeStyle = 'text-yellow-400 bg-yellow-500/10 border border-yellow-500/10';
+                        else if (log.type === 'crash') badgeStyle = 'text-rose-400 bg-rose-500/10 border border-rose-500/10';
+                        else if (log.type === 'system') badgeStyle = 'text-cyan-400 bg-cyan-500/10 font-semibold border border-cyan-500/10';
+
+                        return (
+                          <div
+                            key={log.id}
+                            className="text-[9px] leading-relaxed flex items-start gap-1.5 p-1 rounded-md border border-white/[0.02] bg-[#101224]/30"
+                          >
+                            <span className="text-[8px] text-slate-500 font-mono mt-0.5 shrink-0">
+                              {log.timestamp.split(':').slice(1).join(':')}
+                            </span>
+                            <span className={`text-[8px] px-1 py-[0.5px] rounded scale-90 shrink-0 capitalize ${badgeStyle}`}>
+                              {log.type === 'player_eat' ? 'Devour' : log.type}
+                            </span>
+                            <span className="text-slate-300 font-medium">{log.message}</span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-5 pt-3.5 border-t border-white/5 text-[10px] text-slate-500 flex justify-between items-center">
+                  <span>Match details:</span>
+                  <span className="uppercase text-slate-300 font-extrabold font-mono tracking-wide">
+                    Speed: {settings.speedOption ?? 'Normal'} / {settings.difficulty}
+                  </span>
+                </div>
               </div>
 
               {/* GAME CONFIGURATIONS DRAWER PANEL */}

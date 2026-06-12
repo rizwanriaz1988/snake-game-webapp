@@ -4,8 +4,8 @@
  */
 
 import React from 'react';
-import { ShieldAlert, Volume2, VolumeX, Grid, Layout, RefreshCw, Zap } from 'lucide-react';
-import { GameSettings, Difficulty } from '../types';
+import { ShieldAlert, Volume2, VolumeX, Grid, Layout, RefreshCw, Zap, Gauge, Users } from 'lucide-react';
+import { GameSettings, Difficulty, SpeedOption } from '../types';
 
 interface SettingsProps {
   settings: GameSettings;
@@ -92,6 +92,61 @@ export default function Settings({
             {settings.difficulty === 'easy' && 'Slower starting speed. Easy control.'}
             {settings.difficulty === 'medium' && 'Balanced classic speed.'}
             {settings.difficulty === 'hard' && 'Intense starting speed. Rapid reflexes required!'}
+          </p>
+        </div>
+
+        <div className={`border-b ${sectionDivider}`} />
+
+        {/* SPEED ADJUSTMENT */}
+        <div className="flex flex-col gap-2">
+          <label className={`text-xs font-semibold flex items-center gap-1.5 ${theme === 'retro' ? 'text-green-500' : 'text-slate-500 dark:text-slate-400'}`}>
+            <Gauge className="w-3.5 h-3.5" />
+            Game Velocity Speed
+          </label>
+          <div className="grid grid-cols-4 gap-1.5">
+            {(['slow', 'normal', 'fast', 'hyper'] as SpeedOption[]).map((sp) => (
+              <button
+                key={sp}
+                disabled={gameInProgress}
+                onClick={() => updateSetting('speedOption', sp)}
+                className={getButtonClass(settings.speedOption === sp)}
+                id={`setting-speed-${sp}`}
+              >
+                {sp.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-slate-400 italic">
+            {settings.speedOption === 'slow' && 'Chill pace. Ideal for beginners planning long paths.'}
+            {settings.speedOption === 'normal' && 'Standard classic speed.'}
+            {settings.speedOption === 'fast' && 'High-speed frenzy! Fast and frantic.'}
+            {settings.speedOption === 'hyper' && 'Extreme adrenaline. Pure adrenaline speed!'}
+          </p>
+        </div>
+
+        <div className={`border-b ${sectionDivider}`} />
+
+        {/* COMPETITOR BOTS */}
+        <div className="flex flex-col gap-2">
+          <label className={`text-xs font-semibold flex items-center gap-1.5 ${theme === 'retro' ? 'text-green-500' : 'text-slate-500 dark:text-slate-400'}`}>
+            <Users className="w-3.5 h-3.5" />
+            Rival AI Bots (Multiplayer-Feel)
+          </label>
+          <div className="grid grid-cols-5 gap-1.5">
+            {[0, 1, 2, 3, 4].map((count) => (
+              <button
+                key={count}
+                disabled={gameInProgress}
+                onClick={() => updateSetting('botCount', count)}
+                className={getButtonClass(settings.botCount === count)}
+                id={`setting-bots-${count}`}
+              >
+                {count === 0 ? 'OFF' : `${count} RIVAL${count > 1 ? 'S' : ''}`}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-slate-400 italic border-l-2 pl-2 border-indigo-500/30">
+            Adds rival bot snakes with names that roam the grid, eat food, and crash. Try to outscore them or block them!
           </p>
         </div>
 

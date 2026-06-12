@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Position, GameStatus, Food, Particle } from '../types';
+import { Position, GameStatus, Food, Particle, BotSnake } from '../types';
 
 interface SnakeBoardProps {
   snake: Position[];
@@ -14,6 +14,7 @@ interface SnakeBoardProps {
   status: GameStatus;
   score: number;
   theme: 'light' | 'dark' | 'retro';
+  botSnakes: BotSnake[];
 }
 
 export default function SnakeBoard({
@@ -24,6 +25,7 @@ export default function SnakeBoard({
   status,
   score,
   theme,
+  botSnakes,
 }: SnakeBoardProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -68,6 +70,30 @@ export default function SnakeBoard({
     }
     prevScoreRef.current = score;
   }, [score, status, snake, theme]);
+
+  const prevBotsRef = useRef<BotSnake[]>([]);
+
+  // Trigger particle explosions for bots dying or eating
+  useEffect(() => {
+    botSnakes.forEach((bot) => {
+      const prevBot = prevBotsRef.current.find((b) => b.id === bot.id);
+      if (prevBot && prevBot.isAlive && !bot.isAlive && bot.body.length > 0) {
+        // Explode the bot's head and body beautifully
+        const head = bot.body[0];
+        spawnExplosion(head.x, head.y, bot.color, 18);
+        bot.body.forEach((pos, idx) => {
+          if (idx > 0 && idx % 2 === 0) {
+            spawnExplosion(pos.x, pos.y, bot.color, 3);
+          }
+        });
+      } else if (prevBot && bot.score > prevBot.score && bot.body.length > 0) {
+        // Explode minor particles when a bot eats food
+        const head = bot.body[0];
+        spawnExplosion(head.x, head.y, bot.color, 8);
+      }
+    });
+    prevBotsRef.current = botSnakes;
+  }, [botSnakes]);
 
   // Spawn explosion particles
   const spawnExplosion = (gridX: number, gridY: number, color: string, count: number) => {
@@ -419,6 +445,100 @@ export default function SnakeBoard({
           ctx.restore();
         });
       }
+
+      // 4.5 Draw Bot/AI Snakes
+      botSnakes?.forEach((bot) => {
+        if (!bot.isAlive || bot.body.length === 0) return;
+
+        bot.body.forEach((segment, idx) => {
+          const isHead = idx === 0;
+          const isTail = idx === bot.body.length - 1;
+
+          // Bot custom segment colors
+          let segmentColor = bot.color;
+          let headColor = bot.color;
+          let strokeColor = 'rgba(0,0,0,0.4)';
+
+          // Tail taper
+          const ratio = (bot.body.length - idx) / bot.body.length;
+          const segmentRadius = isHead
+            ? cellSize / 2 - 0.7
+            : (cellSize / 2 - 1.7) * (0.65 + 0.35 * ratio);
+
+          const centerX = segment.x * cellSize + cellSize / 2;
+          const centerY = segment.y * cellSize + cellSize / 2;
+
+          ctx.save();
+          if (theme !== 'light') {
+            ctx.shadowBlur = isHead ? 8 : 3;
+            ctx.shadowColor = segmentColor;
+          }
+
+          ctx.fillStyle = isHead ? headColor : segmentColor;
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = 1;
+
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, segmentRadius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Draw Details on Bot Snake Head
+          if (isHead) {
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#ffffff';
+
+            let eyeRadius = cellSize * 0.12;
+            let pupilRadius = eyeRadius * 0.5;
+            let eyeOffset1 = { dx: 0, dy: 0 };
+            let eyeOffset2 = { dx: 0, dy: 0 };
+            let pupilOffset = { dx: 0, dy: 0 };
+
+            switch (bot.direction) {
+              case 'UP':
+                eyeOffset1 = { dx: -cellSize * 0.20, dy: -cellSize * 0.16 };
+                eyeOffset2 = { dx: cellSize * 0.20, dy: -cellSize * 0.16 };
+                pupilOffset = { dx: 0, dy: -1 };
+                break;
+              case 'DOWN':
+                eyeOffset1 = { dx: -cellSize * 0.20, dy: cellSize * 0.16 };
+                eyeOffset2 = { dx: cellSize * 0.20, dy: cellSize * 0.16 };
+                pupilOffset = { dx: 0, dy: 1 };
+                break;
+              case 'LEFT':
+                eyeOffset1 = { dx: -cellSize * 0.16, dy: -cellSize * 0.20 };
+                eyeOffset2 = { dx: -cellSize * 0.16, dy: cellSize * 0.20 };
+                pupilOffset = { dx: -1, dy: 0 };
+                break;
+              case 'RIGHT':
+                eyeOffset1 = { dx: cellSize * 0.16, dy: -cellSize * 0.20 };
+                eyeOffset2 = { dx: cellSize * 0.16, dy: cellSize * 0.20 };
+                pupilOffset = { dx: 1, dy: 0 };
+                break;
+            }
+
+            // Eyes whites
+            ctx.beginPath();
+            ctx.arc(centerX + eyeOffset1.dx, centerY + eyeOffset1.dy, eyeRadius, 0, Math.PI * 2);
+            ctx.arc(centerX + eyeOffset2.dx, centerY + eyeOffset2.dy, eyeRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Pupils
+            ctx.fillStyle = '#000000';
+            ctx.beginPath();
+            ctx.arc(centerX + eyeOffset1.dx + pupilOffset.dx, centerY + eyeOffset1.dy + pupilOffset.dy, pupilRadius, 0, Math.PI * 2);
+            ctx.arc(centerX + eyeOffset2.dx + pupilOffset.dx, centerY + eyeOffset2.dy + pupilOffset.dy, pupilRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Overhead Bot name
+            ctx.fillStyle = theme === 'retro' ? '#22c55e' : theme === 'dark' ? 'rgba(255, 255, 255, 0.75)' : 'rgba(0, 0, 0, 0.7)';
+            ctx.font = 'bold 8px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(bot.name, centerX, centerY - segmentRadius - 5);
+          }
+          ctx.restore();
+        });
+      });
 
       // 5. Draw and update particles
       const currentParticles = particlesRef.current;
