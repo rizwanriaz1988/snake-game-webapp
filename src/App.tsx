@@ -581,20 +581,35 @@ export default function App() {
     // Devour or crash into rival bots
     if (!playerDead) {
       for (const bot of aliveBots) {
-        const hitsBot = bot.body.some((seg) => seg.x === nextPlayerHead.x && seg.y === nextPlayerHead.y);
-        if (hitsBot) {
+        // Head-to-head collision detector
+        const botHead = bot.body[0];
+        const hitHead = botHead && (nextPlayerHead.x === botHead.x && nextPlayerHead.y === botHead.y);
+
+        // Head-to-body (excluding actual head) collision detector
+        const hitBody = bot.body.slice(1).some((seg) => seg.x === nextPlayerHead.x && seg.y === nextPlayerHead.y);
+
+        if (hitHead) {
           if (prevSnake.length > bot.body.length) {
-            // Player devours Bot!
+            // Player devours Bot head-first!
             deadBotIds.add(bot.id);
             playerScoreBonus += 50;
             playerGrowBy += 3;
-            addGameLog(`⚡ You devoured ${bot.name}! (+50 pts)`, 'player_eat');
-            audio.playLevelUp(); // satisfying bite crunch alternative
-          } else {
-            // Player is smaller/equal and crashes!
+            addGameLog(`⚡ You devoured ${bot.name} head-first! (+50 pts)`, 'player_eat');
+            audio.playLevelUp(); // Crunch alternative sfx
+          } else if (prevSnake.length < bot.body.length) {
+            // Bot devours player head-first!
             playerDead = true;
-            addGameLog(`💀 Killed by a bigger rival (${bot.name})!`, 'crash');
+            addGameLog(`💀 You were devoured head-first by the larger ${bot.name}!`, 'crash');
+          } else {
+            // Equal sized head-to-head collision results in double crash
+            playerDead = true;
+            deadBotIds.add(bot.id);
+            addGameLog(`💀 Double head-collision knockout with ${bot.name}!`, 'crash');
           }
+        } else if (hitBody) {
+          // Rule: Colliding with rival snake body means crashing (no eating allowed!)
+          playerDead = true;
+          addGameLog(`💀 Crashed into ${bot.name}'s body! You can only devour them if you strike their head first!`, 'crash');
         }
       }
     }
@@ -698,7 +713,7 @@ export default function App() {
 
     // 2. Process AI Bot Snake moves
     const nextBots = currentBots.map((bot) => {
-      // If dead or eaten during this turn
+      // If dead or eaten during this turn, prepare to be respawned (reproduced)
       if (!bot.isAlive || deadBotIds.has(bot.id) || bot.body.length === 0) {
         return { ...bot, isAlive: false };
       }
@@ -733,6 +748,9 @@ export default function App() {
 
       // Wrapping checks
       let botCrashed = false;
+      let botScore = bot.score;
+      let botGrowBy = 0;
+
       if (settings.wrapAround) {
         if (nextBotHead.x < 0) nextBotHead.x = size - 1;
         else if (nextBotHead.x >= size) nextBotHead.x = 0;
@@ -745,18 +763,24 @@ export default function App() {
         }
       }
 
-      // Check crash/devoured logic
-      let hitPlayer = updatedPlayerSnake.some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
+      // Check head-first and body crash conditions with player
+      const playerHeadSeg = updatedPlayerSnake[0];
+      const hitPlayerHead = playerHeadSeg && (nextBotHead.x === playerHeadSeg.x && nextBotHead.y === playerHeadSeg.y);
+      const hitPlayerBody = updatedPlayerSnake.slice(1).some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
+
       let hitSelf = bot.body.some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
       let hitRivalBotName = '';
       let hitRivalIsSmaller = false;
       let devouredRivalId: string | null = null;
 
-      // Check other bots
+      // Check other rival bots
       for (const other of currentBots) {
         if (other.id !== bot.id && other.isAlive && !deadBotIds.has(other.id)) {
-          const hitOther = other.body.some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
-          if (hitOther) {
+          const otherHeadSeg = other.body[0];
+          const hitOtherHead = otherHeadSeg && (nextBotHead.x === otherHeadSeg.x && nextBotHead.y === otherHeadSeg.y);
+          const hitOtherBody = other.body.slice(1).some((seg) => seg.x === nextBotHead.x && seg.y === nextBotHead.y);
+
+          if (hitOtherHead) {
             if (bot.body.length > other.body.length) {
               devouredRivalId = other.id;
               hitRivalIsSmaller = true;
@@ -764,6 +788,10 @@ export default function App() {
               botCrashed = true;
             }
             hitRivalBotName = other.name;
+            break;
+          } else if (hitOtherBody) {
+            // Cannot eat other bot's body, always. We crash!
+            botCrashed = true;
             break;
           }
         }
@@ -773,31 +801,37 @@ export default function App() {
         botCrashed = true;
       }
 
-      if (hitPlayer) {
-        // If bot is bigger than player, bot eats player!
+      if (hitPlayerHead) {
         if (bot.body.length > updatedPlayerSnake.length) {
           playerDead = true;
+          botScore += 50;
+          botGrowBy += 3;
+        } else if (bot.body.length < updatedPlayerSnake.length) {
+          botCrashed = true; // Bot gets swallowed head-first
         } else {
+          // Equal: double knockout
+          playerDead = true;
           botCrashed = true;
         }
+      } else if (hitPlayerBody) {
+        // Crashed into player body
+        botCrashed = true;
       }
 
       if (botCrashed) {
+        deadBotIds.add(bot.id);
         return {
           ...bot,
           isAlive: false,
         };
       }
 
-      let botScore = bot.score;
-      let botGrowBy = 0;
-
       // Handle devouring rival bot
       if (devouredRivalId && hitRivalIsSmaller) {
         deadBotIds.add(devouredRivalId);
         botScore += 50;
         botGrowBy = 3;
-        addGameLog(`🔥 ${bot.name} devoured ${hitRivalBotName}! (+50 pts)`, 'eat');
+        addGameLog(`🔥 ${bot.name} devoured ${hitRivalBotName} head-first! (+50 pts)`, 'eat');
       }
 
       const botAteFoodIndex = activeFoodsList.findIndex(
@@ -841,16 +875,80 @@ export default function App() {
     });
 
     if (playerDead) {
-      addGameLog('💀 Devoured by a larger rival snake!', 'crash');
+      addGameLog('💀 Devoured head-first by a larger rival snake!', 'crash');
       triggerGameOver();
       return;
     }
 
-    // Now filter bots again to set any newly eaten/dead bots to dead
-    const finalBots = nextBots.map((b) => {
-      if (deadBotIds.has(b.id)) {
-        return { ...b, isAlive: false };
+    // Reproduce (respawn/re-create) any dead/eaten rival bot snakes!
+    let compositeObstaclesForSpawning = [...updatedPlayerSnake];
+    activeFoodsList.forEach((food) => {
+      compositeObstaclesForSpawning.push(food.position);
+    });
+
+    const getSafeBotSpawn = (
+      allObstacles: Position[],
+      gridSize: number
+    ): Position[] => {
+      let tries = 0;
+      while (tries < 100) {
+        tries++;
+        const rx = Math.floor(Math.random() * (gridSize - 4)) + 2;
+        const ry = Math.floor(Math.random() * (gridSize - 4)) + 2;
+        const orientation = Math.random() > 0.5 ? 'H' : 'V';
+        const proposed: Position[] = [];
+        
+        for (let segment = 0; segment < 3; segment++) {
+          if (orientation === 'H') {
+            proposed.push({
+              x: (rx + segment) % gridSize,
+              y: ry
+            });
+          } else {
+            proposed.push({
+              x: rx,
+              y: (ry + segment) % gridSize
+            });
+          }
+        }
+        
+        const collides = proposed.some((pbody) => 
+          allObstacles.some((obs) => obs.x === pbody.x && obs.y === pbody.y)
+        );
+        
+        if (!collides) {
+          return proposed;
+        }
       }
+      
+      const fallbackY = Math.floor(Math.random() * (gridSize - 4)) + 2;
+      return [
+        { x: 2, y: fallbackY },
+        { x: 3, y: fallbackY },
+        { x: 4, y: fallbackY },
+      ];
+    };
+
+    const finalBots = nextBots.map((b) => {
+      const isDeadNow = !b.isAlive || deadBotIds.has(b.id);
+      
+      if (isDeadNow) {
+        const spawnBody = getSafeBotSpawn(compositeObstaclesForSpawning, size);
+        // Track the respawn coordinates as obstacle for any subsequent bot respawn on this tick
+        compositeObstaclesForSpawning = [...compositeObstaclesForSpawning, ...spawnBody];
+
+        addGameLog(`🌀 ${b.name} regenerated & re-entered the arena!`, 'system');
+
+        return {
+          ...b,
+          isAlive: true,
+          score: 0,
+          direction: Math.random() > 0.5 ? 'LEFT' : 'RIGHT' as Direction,
+          body: spawnBody
+        };
+      }
+      
+      compositeObstaclesForSpawning = [...compositeObstaclesForSpawning, ...b.body];
       return b;
     });
 
