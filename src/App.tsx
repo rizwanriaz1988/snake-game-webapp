@@ -793,6 +793,22 @@ export default function App() {
           botGrowBy += 3;
         } else if (bot.body.length < updatedPlayerSnake.length) {
           botCrashed = true; // Bot gets swallowed head-first
+          // Reward player for swallowing the bot!
+          setStats((prev) => {
+            const nextScore = prev.score + 50;
+            return {
+              ...prev,
+              score: nextScore,
+              highScore: Math.max(prev.highScore, nextScore),
+            };
+          });
+          // Mutate the player snake to grow
+          const lastSeg = updatedPlayerSnake[updatedPlayerSnake.length - 1] || playerHeadSeg;
+          for (let i = 0; i < 3; i++) {
+            updatedPlayerSnake.push({ ...lastSeg });
+          }
+          addGameLog(`⚡ You devoured ${bot.name} head-first! (+50 pts)`, 'player_eat');
+          audio.playLevelUp();
         } else {
           // Equal: double knockout
           playerDead = true;
